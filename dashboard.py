@@ -88,6 +88,36 @@ R  = COLORS["risk_red"]
 G  = COLORS["safe_green"]
 W  = COLORS["warn_amber"]
 
+_DEFAULT_PATH = Path(__file__).parent.parent.parent / "f.xlsx"
+
+# ── Shared enrichment ─────────────────────────────────────────────────────────
+def _enrich_results(df):
+    res    = run_analysis(df)
+    df_top = top_company_filter(df)
+    amex   = df_top[df_top["Is_Focus"]]
+    amex_mr = (amex.groupby("Month_dt")
+               .apply(lambda g: g["Is_Monetary"].mean() * 100)
+               .reset_index(name="amex_mr"))
+    ind_mr  = (df_top.groupby("Month_dt")
+               .apply(lambda g: g["Is_Monetary"].mean() * 100)
+               .reset_index(name="ind_mr"))
+    merged  = amex_mr.merge(ind_mr, on="Month_dt")
+    merged["rolling_3m"] = merged["amex_mr"].rolling(3, center=True).mean()
+    res["amex_mr_trend"] = merged
+    return res
+
+# Runs ONCE when the app process starts; survives all page refreshes & sessions.
+@st.cache_resource(show_spinner="Loading CFPB dataset…")
+def _default_results():
+    return _enrich_results(load_data(_DEFAULT_PATH))
+
+# Keyed on file bytes — recomputes only when a genuinely new file is uploaded.
+@st.cache_data(show_spinner="Analysing uploaded file…")
+def _uploaded_results(file_bytes: bytes, file_name: str):
+    tmp = Path("/tmp") / file_name
+    tmp.write_bytes(file_bytes)
+    return _enrich_results(load_data(tmp))
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/f/fa/American_Express_logo_%282018%29.svg",
@@ -95,53 +125,18 @@ with st.sidebar:
     st.markdown("---")
     st.header("Settings")
 
-    default_path = Path(__file__).parent.parent.parent / "f.xlsx"
-
-    # ── Cached loaders ────────────────────────────────────────────────────────
-    def _enrich_results(df):
-        """Shared post-analysis enrichment (monetary relief trend)."""
-        res    = run_analysis(df)
-        df_top = top_company_filter(df)
-        amex   = df_top[df_top["Is_Focus"]]
-        amex_mr = (amex.groupby("Month_dt")
-                   .apply(lambda g: g["Is_Monetary"].mean() * 100)
-                   .reset_index(name="amex_mr"))
-        ind_mr  = (df_top.groupby("Month_dt")
-                   .apply(lambda g: g["Is_Monetary"].mean() * 100)
-                   .reset_index(name="ind_mr"))
-        merged  = amex_mr.merge(ind_mr, on="Month_dt")
-        merged["rolling_3m"] = merged["amex_mr"].rolling(3, center=True).mean()
-        res["amex_mr_trend"] = merged
-        return res
-
-    @st.cache_data(show_spinner="Loading default dataset…", persist=False)
-    def load_default(path_str: str):
-        """Keyed on path — loads once, never re-reads disk on UI interactions."""
-        return _enrich_results(load_data(Path(path_str)))
-
-    @st.cache_data(show_spinner="Analysing uploaded file…")
-    def load_uploaded(file_bytes: bytes, file_name: str):
-        """Keyed on file content — recomputes only when a new file is uploaded."""
-        tmp = Path("/tmp") / file_name
-        tmp.write_bytes(file_bytes)
-        return _enrich_results(load_data(tmp))
-
-    # ── Source selection ──────────────────────────────────────────────────────
     uploaded = st.file_uploader(
-        "Upload new CFPB data (Excel / CSV)",
+        "Upload your own CFPB data",
         type=["xlsx", "xls", "csv"],
         help="Leave empty to use the built-in f.xlsx dataset",
     )
 
     if uploaded is not None:
-        results = load_uploaded(uploaded.read(), uploaded.name)
-        st.success(f"Using uploaded file: {uploaded.name}")
-    elif default_path.exists():
-        results = load_default(str(default_path))
-        st.info(f"Using default dataset: f.xlsx")
+        results = _uploaded_results(uploaded.read(), uploaded.name)
+        st.success(f"Custom file: {uploaded.name}")
     else:
-        st.error("Default file f.xlsx not found. Please upload a CFPB data file.")
-        st.stop()
+        results = _default_results()
+        st.info("Default dataset: f.xlsx")
 
     recs = build_recommendations(results)
 
