@@ -9,6 +9,7 @@ from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
 from pathlib import Path
+from PIL import Image, ImageDraw
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -18,10 +19,21 @@ from cfpb_intelligence.config import (
     FOCUS_COMPANY, COMPANY_PALETTE, COLORS, ISSUE_SHORT_LABELS
 )
 
+# ── AMEX favicon (blue card with white "AMEX" lettering) ─────────────────────
+def _make_amex_icon() -> Image.Image:
+    size = 64
+    img  = Image.new("RGB", (size, size), "#006FCF")
+    draw = ImageDraw.Draw(img)
+    # white rounded stripe across the centre — simple, brand-legible
+    stripe_h = 14
+    y0 = (size - stripe_h) // 2
+    draw.rectangle([6, y0, size - 6, y0 + stripe_h], fill="white")
+    return img
+
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="CFPB Complaint Intelligence",
-    page_icon=":bar_chart:",
+    page_icon=_make_amex_icon(),
     layout="wide",
     initial_sidebar_state="expanded",
 )
