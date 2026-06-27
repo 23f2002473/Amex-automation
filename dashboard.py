@@ -88,7 +88,8 @@ R  = COLORS["risk_red"]
 G  = COLORS["safe_green"]
 W  = COLORS["warn_amber"]
 
-_DEFAULT_PATH = Path(__file__).parent.parent.parent / "f.xlsx"
+_PKL_PATH     = Path(__file__).parent / "default_results.pkl"
+_DEFAULT_XLSX = Path(__file__).parent.parent.parent / "f.xlsx"
 
 # ── Shared enrichment ─────────────────────────────────────────────────────────
 def _enrich_results(df):
@@ -106,10 +107,22 @@ def _enrich_results(df):
     res["amex_mr_trend"] = merged
     return res
 
-# Runs ONCE when the app process starts; survives all page refreshes & sessions.
+# Runs ONCE per app process; result is shared across all sessions / page refreshes.
 @st.cache_resource(show_spinner="Loading CFPB dataset…")
 def _default_results():
-    return _enrich_results(load_data(_DEFAULT_PATH))
+    import pickle
+    if _PKL_PATH.exists():
+        # Fast path: pre-computed pickle committed to the repo
+        with open(_PKL_PATH, "rb") as f:
+            return pickle.load(f)
+    elif _DEFAULT_XLSX.exists():
+        # Local fallback: analyse the raw Excel (slower, only on dev machine)
+        return _enrich_results(load_data(_DEFAULT_XLSX))
+    else:
+        raise FileNotFoundError(
+            "default_results.pkl not found. "
+            "Run  python3 precompute.py  locally and commit the pkl file."
+        )
 
 # Keyed on file bytes — recomputes only when a genuinely new file is uploaded.
 @st.cache_data(show_spinner="Analysing uploaded file…")
@@ -136,7 +149,7 @@ with st.sidebar:
         st.success(f"Custom file: {uploaded.name}")
     else:
         results = _default_results()
-        st.info("Default dataset: f.xlsx")
+        st.info("Default Dataset")
 
     recs = build_recommendations(results)
 
