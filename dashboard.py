@@ -83,36 +83,52 @@ with st.sidebar:
     st.markdown("---")
     st.header("Settings")
 
-    uploaded = st.file_uploader("Upload CFPB data (Excel / CSV)", type=["xlsx","xls","csv"])
-    default_path = Path(__file__).parent.parent / "f.xlsx"
+    default_path = Path(__file__).parent.parent.parent / "f.xlsx"
 
-    @st.cache_data(show_spinner="Loading & analysing data…")
-    def load_and_analyse(file_bytes, file_name):
-        import io
-        tmp = Path("/tmp") / file_name
-        tmp.write_bytes(file_bytes)
-        df  = load_data(tmp)
-        res = run_analysis(df)
-        # add monetary relief trend to results
+    # ── Cached loaders ────────────────────────────────────────────────────────
+    def _enrich_results(df):
+        """Shared post-analysis enrichment (monetary relief trend)."""
+        res    = run_analysis(df)
         df_top = top_company_filter(df)
         amex   = df_top[df_top["Is_Focus"]]
-        amex_mr= (amex.groupby("Month_dt")
-                  .apply(lambda g: g["Is_Monetary"].mean()*100)
-                  .reset_index(name="amex_mr"))
-        ind_mr = (df_top.groupby("Month_dt")
-                  .apply(lambda g: g["Is_Monetary"].mean()*100)
-                  .reset_index(name="ind_mr"))
-        merged = amex_mr.merge(ind_mr, on="Month_dt")
+        amex_mr = (amex.groupby("Month_dt")
+                   .apply(lambda g: g["Is_Monetary"].mean() * 100)
+                   .reset_index(name="amex_mr"))
+        ind_mr  = (df_top.groupby("Month_dt")
+                   .apply(lambda g: g["Is_Monetary"].mean() * 100)
+                   .reset_index(name="ind_mr"))
+        merged  = amex_mr.merge(ind_mr, on="Month_dt")
         merged["rolling_3m"] = merged["amex_mr"].rolling(3, center=True).mean()
         res["amex_mr_trend"] = merged
         return res
 
-    if uploaded:
-        results = load_and_analyse(uploaded.read(), uploaded.name)
+    @st.cache_data(show_spinner="Loading default dataset…", persist=False)
+    def load_default(path_str: str):
+        """Keyed on path — loads once, never re-reads disk on UI interactions."""
+        return _enrich_results(load_data(Path(path_str)))
+
+    @st.cache_data(show_spinner="Analysing uploaded file…")
+    def load_uploaded(file_bytes: bytes, file_name: str):
+        """Keyed on file content — recomputes only when a new file is uploaded."""
+        tmp = Path("/tmp") / file_name
+        tmp.write_bytes(file_bytes)
+        return _enrich_results(load_data(tmp))
+
+    # ── Source selection ──────────────────────────────────────────────────────
+    uploaded = st.file_uploader(
+        "Upload new CFPB data (Excel / CSV)",
+        type=["xlsx", "xls", "csv"],
+        help="Leave empty to use the built-in f.xlsx dataset",
+    )
+
+    if uploaded is not None:
+        results = load_uploaded(uploaded.read(), uploaded.name)
+        st.success(f"Using uploaded file: {uploaded.name}")
     elif default_path.exists():
-        results = load_and_analyse(default_path.read_bytes(), default_path.name)
+        results = load_default(str(default_path))
+        st.info(f"Using default dataset: f.xlsx")
     else:
-        st.warning("Upload a CFPB data file to begin.")
+        st.error("Default file f.xlsx not found. Please upload a CFPB data file.")
         st.stop()
 
     recs = build_recommendations(results)
